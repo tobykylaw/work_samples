@@ -1,2 +1,2 @@
 # work_samples
-Work samples for school application purposes
+Work samples for school application purposes.
