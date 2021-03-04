@@ -1,0 +1,4 @@
+Pairs of classes	SPKernel	
+mutagenic:mutagenic	5303.65
+mutagenic:non-mutagenic	2706.78
+non-mutagenic:non-mutagenic	1428.25
