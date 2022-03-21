@@ -13,7 +13,7 @@ To run the test suite, please set the working directory in the run_test.R script
 Coding and problem solving assignments completed for the Stochastics (Probability and Statistics) course (406-0603-AAS) at ETH Zurich. R scripts contain the task descriptions as well as solutions in code. The pdf files contained scanned workings of problems contained in the [Statistics for Research handbook](./Probability_and_Statistics/Statistics_for_Research_(source_of_questions).pdf).
 
 ## Data Visualization
-Visualization of graphical, geospatial and text data using R packages, coding and problem solving assignments completed for the Data Visualization course (QMSS-G5063) at Columbia University. Please see [README.md](./Data_Visualization/readme.md) for the task description.
+Visualization of graphical, geospatial and text data using R packages, coding and problem solving assignments completed for the Data Visualization course (QMSS-G5063) at Columbia University. Please see [README.md](./Data_Visualization/README.md) for the task description.
 
 ### For current students of ETH Zurich and Columbia University:
 Please do not copy, distribute and modify the contents of this repository for any personal purposes. Plagarism is never tolerated, and all course administrators strictly screen for attempts that plagarizes work submitted by students in previous years. There is much to learn from the the process of hammering this out on your own and with your peers.
