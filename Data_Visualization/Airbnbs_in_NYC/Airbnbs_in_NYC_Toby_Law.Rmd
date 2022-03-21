@@ -1,0 +1,735 @@
+---
+title: "Airbnbs in NYC"
+author: "Toby Law"
+date: "3/15/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE, message=FALSE}
+knitr::opts_chunk$set(echo=FALSE, warning=FALSE, message=FALSE)
+library(geojsonio)
+library(ggplot2)
+library(rgdal)
+library(sp)
+library(dplyr)
+library(htmlwidgets)
+library(leaflet)
+library(leaflet.extras)
+library(RColorBrewer)
+library(htmltools)
+library(ggmap)
+library(readr)
+library(tidyr)
+library(forcats)
+library(ggthemes)
+library(DT)
+```
+# Introduction
+
+## AirBnB
+
+The data for AirBnB contains detailed information on all of the approximately 
+fifty thousand private apartment listings for rent through the site in New York City. 
+The data is for a time before the COVID pandemic because I wanted to remove that 
+additional complication for data analysis.
+
+**Selected Variables:**
+
+-   `id`: ID number of the listing
+-   `transit`: description of the transit options
+-   `host_id`: a unique ID for the host
+-   `host_listings_count`: how many places does the host rent out?
+-   `latitude`/`longitude`: the Geo coordinates
+-   `room_type` / `accommodates` / `bathrooms` / `bedrooms`: some info about the 
+place, like number of bed- and bathrooms, whether it is shared etc.
+-   `price`: nightly price
+-   `availability_365`: What part of the year is the property available to be rented?
+-   Number of reviews / Review scores
+
+There are many other variables included, many of which are not needed and discarded.
+
+## Maps
+
+There are three types of maps:
+
+-   a vector map of NYC boroughs, as we used them lecture
+-   a map of NYC neighborhoods
+-   a map of subway lines and stations
+
+
+### Maps: Neighborhoods of NYC
+
+The file `neighbourhoods.geojson` is a GeoJSON file of NYC neighborhoods. 
+
+
+# Importing datasets, spatial objects and cleaning
+
+To start off, the neighborhood and borough geospatial objects, as 
+well as the data frame that contains the airbnb listings, are imported. 
+Required columns are selected and the price columns are cleaned,
+such that they are numeric. Monthly prices are imputed (using nightly price 
+multiplied by 30) if they are not given. 
+
+```{r Importing and Cleaning Data, echo = FALSE, warning=FALSE, message=FALSE}
+
+neighborhood <- geojson_read("./data/neighbourhoods.geojson", what = "sp")
+
+borough <- readOGR("./data/nyc_boroughs_map/nybb.shp")
+
+# unzip and read in csv for airbnb listings
+airbnb <- read.csv(unz("./data/airbnb_listings.csv.zip", "airbnb_listings.csv"))
+
+# Select the required columns from airbnb listings
+airbnb_clean <- airbnb %>%
+  select(id, price, monthly_price,
+         latitude, longitude, zipcode,
+         neighbourhood_cleansed, neighbourhood_group_cleansed,
+         room_type, accommodates,
+         availability_365,
+         host_id, host_name, host_listings_count, 
+         number_of_reviews, review_scores_rating)
+
+
+# airbnb_clean: Convert price and monthly price from string to numeric. 
+# If no monthly price is given then just impute price x 30. 
+airbnb_clean <- airbnb_clean %>%
+  mutate(price = parse_number(price)) %>%
+  mutate(monthly_price = parse_number(monthly_price, 
+                                      locale = locale(decimal_mark = ".", 
+                                                      grouping_mark = ","))) %>%
+  mutate(monthly_price = ifelse(is.na(monthly_price), price*30, monthly_price)) %>%
+  rename(neighbourhood = neighbourhood_cleansed) %>%
+  rename(borough = neighbourhood_group_cleansed)
+
+#Table 0
+datatable(head(airbnb_clean, 10),
+    caption = "Snippet of cleaned airbnb data frame",
+    filter = list(position = "top"),
+    options = list(language = list(sSearch = "Filter:")))
+
+# Unify the CRS for borough and neighborhood
+borough <- spTransform(borough, CRS = proj4string(neighborhood))
+
+```
+
+
+# Question 1 - Overall Location
+
+a)  Provide a map to show where in New York City AirBnB listings are located.
+
+**Answer: **
+First the borough polygons and neighborhood outlines are overlapped with 
+the NYC map tiles to give a base map for all of our visualizations.
+Each borough and neighborhood is labelled accordingly. 
+
+```{r Q1a Base map, echo=FALSE, message=FALSE}
+
+# Define color palette for boroughs
+borough_pal <- brewer.pal(n = 5, name = "Dark2")
+
+# Initialize base map of NYC
+neighborhood_label <- paste0("<b>Neighbourhood: </b>", 
+                             neighborhood$neighbourhood, "<br/>",
+                             "<b>Borough: </b>", 
+                             neighborhood$neighbourhood_group) %>%
+  lapply(htmltools::HTML)
+
+nyc_base <- leaflet() %>%
+  addProviderTiles("CartoDB", 
+                   options = providerTileOptions(minZoom = 10)) %>%
+  setView(lng = -73.935242, lat = 40.730610, zoom = 10) %>%
+  setMaxBounds(lng1 = -73.476, lat1 = 40.914,
+               lng2 = -74.443, lat2 = 40.489) %>%
+  addPolygons(data = borough,
+              weight = 1,
+              fillOpacity = 0.5,
+              color = borough_pal,
+              label = borough$BoroName,
+              highlightOptions = highlightOptions(color = "black", 
+                                                  weight = 2),
+              group = "Borough") %>%
+  addPolygons(data = neighborhood,
+              color = "#6e7f80", 
+              weight = 1, 
+              label = neighborhood_label,
+              highlightOptions = highlightOptions(color = "black", 
+                                                  weight = 2),
+              group = "Neighborhood") %>%
+  addLayersControl(overlayGroups = c("Borough", "Neighborhood"))
+
+nyc_base
+```
+Then markers for each listing are added using the coordinates in the airbnb 
+data frame. A few important pieces of information are provided as labels for
+each listing, including price, room type and their zipcode.   
+
+When zoomed into each of the five boroughs, it can be seen that listings are 
+available across the entirety of Manhattan Island. In the other boroughs,
+they are more clustered at northwestern neighbourhoods of Queens (especially
+Astoria), as well as the northern neighbourhoods of Brooklyn (Greenpoint,
+Bushwick, Bedford-Stuyvesant, Williamsburg).
+
+```{r Q1a Map of all listings, echo=FALSE, message=FALSE}
+# Formatting labels for each listing
+listing_label <- paste0("<b>Lisitng ID: </b>", airbnb_clean$id, "<br/>", 
+                        "<b>Room Type: </b>", airbnb_clean$room_type, "<br/>",
+                        "<b>Nightly price: </b>", "$", airbnb_clean$price, "<br/>",
+                        "<b>Neighbourhood: </b>", airbnb_clean$neighbourhood, "<br/>",
+                        "<b>Zipcode: </b>", airbnb_clean$zipcode) %>%
+  lapply(htmltools::HTML)
+
+# Map of Airbnb listings in NYC
+listings_nyc <- nyc_base %>% 
+  addCircleMarkers(data = airbnb_clean,
+                   lng = ~longitude,
+                   lat = ~latitude,
+                   col = "#665d1e",
+                   radius = 1,
+                   label = ~listing_label)
+
+listings_nyc
+```
+
+b)  Provide a map in which you summarize the density of the AirBnB listings and 
+highlight the hot-spots for AirBnB locations. 
+Make sure to annotate a few hot-spots on the map.
+
+**Answer: **
+`ggplot2` is used to overlay the borough polygons and neighbourhood borders to 
+create a base map, then the density heat map of airbnb listings is overlaid on 
+top. It turns out that regions with the densest Airbnb listings are located 
+at Manhattan island and Northern Brooklyn. 
+
+```{r Q1b Heatmap, echo=FALSE, message=FALSE}
+
+borough_pal_2 <- brewer.pal(n = 5, "Set2")
+
+borough_df <- fortify(borough)
+neighborhood_df <- fortify(neighborhood)
+
+density_heatmap <- ggplot() + 
+  geom_polygon(data = borough_df, aes(long, lat, group = group, color = id), 
+               fill = "#6c6a61", size = 1.2)  + 
+  geom_path(data = neighborhood_df, aes(long, lat, group = id), col = "#b1b1b1") +
+  scale_color_manual(values = borough_pal_2, 
+                     labels = c("Staten Island", "Bronx",
+                                "Manhattan", "Brooklyn", "Queens")) + 
+  stat_density2d(data = airbnb_clean, aes(longitude, latitude, fill = ..level..),
+                 geom = "polygon", alpha = 0.5, bins = 4) + 
+  scale_fill_gradient(low = "white", 
+                      high = "red", 
+                      name = "Density of listings") + 
+  theme_void() + 
+  theme(plot.background = element_rect(fill = "#c0c0c0"),
+        text = element_text(family = "mono")) + 
+  labs(title = "Density heatmap of Airbnb listings in NYC",
+       color = "Borough")
+
+density_heatmap
+```
+
+When zoomed into the regions of interest, the hotspots with the densest Airbnb
+listings (per unit sq of the longitude-latitude grid) turns out to be Hell's 
+Kitchen, East Village and Lower East Side in Manhattan, as well as Williamsburg,
+Bushwick and Bedford-Stuyvesant in Brooklyn. 
+
+```{r Q1b Heatmap Zoomed in, echo=FALSE, message=FALSE}
+
+# Zooming in and adding labels
+density_heatmap + 
+  coord_cartesian(xlim = c(-74.09, -73.84), ylim = c(40.65, 40.85)) + 
+  annotate(geom = "text", 
+           x = -74.02, y = 40.76, 
+           label = "Hell's Kitchen", 
+           family = "mono", 
+           size = 3.5) + 
+  annotate(geom = "text", 
+           x = -74.01 ,y = 40.72, 
+           label = "East Village/\nLower East Side", 
+           family = "mono", 
+           size = 3.5) + 
+  annotate(geom = "text", 
+           x = -73.95 ,y = 40.72, 
+           label = "Williamsburg", 
+           family = "mono", 
+           size = 3.5) + 
+  annotate(geom = "text", 
+           x = -73.92 ,y = 40.70, 
+           label = "Bushwick", 
+           family = "mono", 
+           size = 3.5) + 
+  annotate(geom = "text", 
+           x = -73.95 ,y = 40.68, 
+           label = "Bedford-Stuyvesant", 
+           family = "mono", 
+           size = 3.5)
+  
+  
+```
+
+As an alternative to visualizing clusters of Airbnb listings, here is an 
+interactive map where listings are clustered by proximity, and clicking onto
+each cluster zooms into each region, and spiders out into smaller clusters.
+
+Hovering over each cluster shows the number of listings, as well as the borders 
+of the region of interest. 
+
+```{r Q1b Interactive cluster map, echo=FALSE, message=FALSE}
+
+# We can also use an interactive cluster map to visualize airbnb hotspots
+listings_nyc %>%
+  clearMarkers() %>%
+  addCircleMarkers(data = airbnb_clean,
+                   lng = ~longitude,
+                   lat = ~latitude,
+                   col = "#665d1e",
+                   radius = 1,
+                   label = ~listing_label,
+                   clusterOptions = markerClusterOptions())
+```
+
+
+# Question 2 - Renting out your apartment vs. permanent rentals
+
+An Airbnb host can set up a calendar for their listing so that it is only 
+available for a few days or weeks a year. Other listings are available all year
+round (except for when it is already booked). Entire homes or apartments highly
+available and rented frequently year-round to tourists probably don't have the
+owner present, are illegal, and more importantly, are displacing New Yorkers.
+
+Hint: The variable `availability_365`: 
+*What part of the year is the property available to be rented?* 
+is a possible choice to categorize rentals.
+
+## Question 2a)  
+
+Choose a combination of *both maps and non-mapping visualizations (graphs or tables)* 
+to explore where in NYC listings are available sporadically vs. year-round. 
+Make sure to highlight the neighborhoods where most listings appear to be 
+permanent or semi-permanent rentals.
+
+**Answer: **
+The `availability_365` varaible records how many days out of a year is
+a listing available for. 
+Making use of the `availability_365` variable, each listing is sorted into one
+of the following 5 categories of availability, as `availability_factor`:
+
+1. Less than 30 days 
+2. 1-4 months
+3. 4-9 months
+4. Majority of the year (>9 months but not all year round)
+5. All-year-round
+
+Category 1 and 2 would most likely be rentals with long-term renters/mostly inhabited 
+by the host, but let out sporadically during summer/holiday seasons when the 
+long-term renters or host leave the city.
+
+Category 3 would mostly likely be rentals where the host uses the property as 
+short-term temporary abode some times in the year (eg. a holiday home).
+They would be rented out sporadically as Airbnbs' when they are not needed by 
+the host.
+
+Category 4 and 5 would be rentals that are highly available and rented out
+year-round to tourists probably don't have the owner present, are illegal, 
+and more importantly, possibly displacing New Yorkers.
+
+Each type of availability is summarized by borough, in the datatable below:
+
+```{r Q2a Table 1 Availability by borough, echo=FALSE, message=FALSE}
+
+# Group the variable into "less than 30 days", "1-4 months", "4-9 months", 
+# "majority of the year", "all-year-round"
+availability_df <- airbnb_clean %>%
+  mutate(availability_factor = 
+           case_when(availability_365 <= 30 ~ "Less than 30 days",
+                     availability_365 > 30 & availability_365 <= 120 ~ "1-4 months",
+                     availability_365 > 120 & availability_365 <= 270 ~ "4-9 months",
+                     availability_365 > 270 & availability_365 < 365 ~ "Majority of the year",
+                     availability_365 == 365 ~ "All-year-round"))
+
+# Summarizing availability of listings in each borough
+overall <- availability_df %>%
+  group_by(borough) %>%
+  mutate(borough_total = n()) %>%
+  group_by(borough, availability_factor, borough_total) %>%
+  count() %>%
+  mutate(perc_of_borough = n*100/borough_total)
+
+datatable(overall,
+    caption = "Table 1: Availability of listings by borough",
+    filter = list(position = "top"),
+    options = list(language = list(sSearch = "Filter:")))
+
+```
+The table is visualized as the barplot below:
+
+For all boroughs, all year round rentals are the least prevalent type of listing. 
+
+Most listings in Manhattan and Brooklyn are available for less than a month, but
+there are around 15-17% of listings that are available most of the year.
+
+For Staten Island and the Bronx, the most prevalent kind of listings are available
+for the majority of the year. They have a lower proportion of short-term listings 
+compared to Manhattan and Brooklyn. 
+
+The availability of listings in Queens are comparatively more evenly spread out.
+About 1/3 of listings are short-term, and approximately 1/4 of listings fall into
+each of the 3 intermediate to long-term cateogeries. 
+
+```{r Q2a Plot 1 Availability by borough, echo=FALSE, message=FALSE}
+
+# Barplot
+ggplot(overall, aes(x = borough, y = perc_of_borough, 
+                    fill = fct_infreq(availability_factor))) + 
+  geom_bar(stat = "identity", position = "fill") + 
+  scale_fill_manual(values = c("#baab68", "#6d213c", 
+                               "#946846", "#1e555c", "#e3c16f")) + 
+  geom_text(aes(label = paste0(sprintf("%1.1f", perc_of_borough), "%")), 
+            position = position_fill(vjust = 0.5), 
+            family = "mono", color = "white") + 
+  theme_tufte() + 
+  labs(title = "How available are the listings in each NYC borough?",
+       x = "NYC borough",
+       y = "Proportion of listings",
+       fill = "Availability") + 
+  theme(text = element_text(family = "mono", face = "bold"),
+        axis.text.x = element_text(angle = 45, vjust = 0.6))
+```
+
+This is a table summarizing boroughs and top 30 neighbourhoods with the most highly 
+available (>9 months in a year) Airbnb listings. They are mostly neighbourhoods
+in Manhattan and Brooklyn (Bedford-Stuyvesant, Hell's Kitchen, Williamsburg etc.).
+
+```{r Q2a Table 2 Locations of the most available listings, echo=FALSE, message=FALSE}
+# Filter for listings that are semi-permanently/permanently available
+most_available <- availability_df %>%
+  filter(availability_factor == "Majority of the year" | 
+           availability_factor == "All-year-round") %>%
+  select(id, price, longitude, latitude, borough, 
+         neighbourhood, zipcode, availability_factor)
+
+# Table summarizing which boroughs and neighbourhoods have the most highly available
+# airbnb listings
+most_available_bn <- most_available %>%
+  group_by(borough, neighbourhood, availability_factor) %>%
+  count() %>%
+  arrange(desc(n)) %>%
+  head(30)
+
+datatable(most_available_bn,
+    caption = "Table 2: Neighbourhoods with the most semi-permanently/
+    permanently available listings",
+    filter = list(position = "top"),
+    options = list(language = list(sSearch = "Filter:")))
+
+```
+
+Again, the bar plot below shows the frequency of the semi-permanent/permanent 
+listings in each borough. 
+
+This adds up to 9840 listings across the 5 boroughs that are rented out year-round
+to tourists, and are possibly displacing New Yorkers. 
+
+```{r Q2a Plot 2 Locations of the most available listings, echo=FALSE, message=FALSE}
+# Bar plot - Boroughs where the semi-permanent/permanent listings are located
+ggplot(most_available, aes(x = fct_infreq(rev(availability_factor)), 
+                           fill = borough)) + 
+  geom_bar(position = "dodge") +
+  scale_fill_manual(values = c("#baab68", "#6d213c", "#946846", 
+                               "#1e555c", "#e3c16f")) +
+  theme_tufte() + 
+  labs(title = "Where are the semi-permanently/permanently \n 
+       available listings located?",
+       x = "Availability thoughout the year",
+       y = "Number of listings",
+       fill = "NYC Borough") + 
+  theme(text = element_text(family = "mono", face = "bold"),
+        axis.text.x = element_text(angle = 45, vjust = 0.6))
+```
+
+This is a table summarizing boroughs and top 30 neighbourhoods with
+the most sporadically available (<9 months in a year) Airbnb listings. 
+They are again mostly neighbourhoods in Manhattan and Brooklyn, and coincide with
+the airbnb hotspots identified as before (Williamsburg, Bedford-Stuyvesant, 
+Bushwick, East Village).
+
+```{r Q2a Table 3 Locations of the sporadically available listings, echo=FALSE, message=FALSE}
+# Filter for listings that are sporadically available
+sporadically_available <- availability_df %>%
+  filter(availability_factor == "Less than 30 days" | 
+           availability_factor == "1-4 months" | 
+           availability_factor == "4-9 months") %>%
+  select(id, price, borough, longitude, latitude, 
+         neighbourhood, zipcode, availability_factor)
+
+# Table summarizing which boroughs and neighbourhoods have the most highly available
+# airbnb listings
+sporadically_available_bn <- sporadically_available %>%
+  group_by(borough, neighbourhood, availability_factor) %>%
+  count() %>%
+  arrange(desc(n)) %>%
+  head(30)
+
+datatable(sporadically_available_bn,
+    caption = "Table 3: Neighbourhoods with the most 
+    sporadically available listings",
+    filter = list(position = "top"),
+    options = list(language = list(sSearch = "Filter:")))
+```
+
+The barplot below shows the number of sporadically available listings across the
+5 NYC boroughs. This adds up to 38961 listings which periodically rotates between
+hosting tourists/homeowners/long and short-term local renters. 
+
+```{r Q2a Plot 3 Locations of the sporadically available listings, echo=FALSE, message=FALSE}
+# Bar plot - Boroughs where the sporadically available listings are located
+ggplot(sporadically_available, aes(x = fct_infreq(rev(availability_factor)), 
+                                   fill = borough)) + 
+  geom_bar(position = "dodge") +
+  scale_fill_manual(values = c("#baab68", "#6d213c", "#946846", 
+                               "#1e555c", "#e3c16f")) +
+  theme_tufte() + 
+  labs(title = "Where are the sporadically available listings located?",
+       x = "Availability thoughout the year",
+       y = "Number of listings",
+       fill = "NYC Borough") + 
+  theme(text = element_text(family = "mono", face = "bold"),
+        axis.text.x = element_text(angle = 45, vjust = 0.6))
+```
+
+The proportion of semi-permanently/permanently available listings in each 
+neighbourhood are summarized in this table: 
+
+Looking at the top 10 Airbnb hotspots, the proportion of semi-permanently/
+permanently available listings in each neighbourhood can range widely from
+11% - 46%. Nonetheless this adds up to a large number of properties that 
+have been sequestered from the local rental market. 
+```{r Q2a Table 4 Proportion of most available listings by neighbourhood, echo=FALSE, message=FALSE}
+
+# Finding the proportion of semi-permanently/permanently available listings
+# in each neighbourhood
+prop_most_available <- availability_df %>%
+  group_by(neighbourhood) %>%
+  mutate(neighbourhood_total = n()) %>%
+  group_by(neighbourhood, availability_factor, neighbourhood_total) %>%
+  summarize(n = n()) %>%
+  filter(availability_factor %in% c("All-year-round", "Majority of the year")) %>%
+  group_by(neighbourhood, neighbourhood_total) %>%
+  summarize(most_available_num = sum(n)) %>%
+  mutate(prop_most_available = most_available_num/neighbourhood_total)
+
+prop_most_available %>%
+  arrange(desc(most_available_num)) %>%
+  datatable(
+    caption = "Table 4: Proportion of listings in each neighbourhood that are 
+    permanently/semi-permanently available",
+    filter = list(position = "top"),
+    options = list(language = list(sSearch = "Filter:")))
+```
+
+The proportions of semi-permanently/permanently available listings in each 
+neighbourhood are also visualized in the choropleth map below:
+
+```{r Q2a Choropleth Map, echo=FALSE, message=FALSE}
+neighborhood <- geojson_read("./data/neighbourhoods.geojson", what = "sp")
+
+# Joining the proportions to the neighbourhood spatial object df
+neighbourhoods_most_available <- 
+  full_join(neighborhood@data, prop_most_available,
+            by = c("neighbourhood" = "neighbourhood")) %>%
+  replace(is.na(.), 0)
+  
+neighborhood@data <- neighbourhoods_most_available  
+
+# Define color palette for the choropleth map
+choro_pal <- colorBin("YlOrRd", domain = neighborhood$prop_most_available,
+                      bins = c(0, 0.2, 0.5, 0.7, 0.9, 1))
+
+# Define the labels containing information about number and proportion of 
+# semi-permanently/permanently available listings
+neighborhood_label_2 <- neighborhood_label <- paste0("<b>Neighbourhood: </b>", 
+                             neighborhood$neighbourhood, "<br/>",
+                             "<b>Borough: </b>", 
+                             neighborhood$neighbourhood_group, "<br/>",
+                             "<b>Number of listings: </b>", 
+                             neighborhood$neighbourhood_total, "<br/>",
+                             "<b>Number of semi-permanent/<br/>
+                             permanent Airbnb listings: </b>", 
+                             neighborhood$most_available_num, "<br/>",
+                             "<b>Proportion of listings available <br/> 
+                             >9 months in a year: </b>", 
+                             "<br/>",
+                              sprintf("%1.2f", neighborhood$prop_most_available)) %>%
+  lapply(htmltools::HTML)
+
+# Choropleth map
+leaflet() %>%
+  addProviderTiles("CartoDB", 
+                   options = providerTileOptions(minZoom = 10)) %>%
+  setView(lng = -73.935242, lat = 40.730610, zoom = 10) %>%
+  setMaxBounds(lng1 = -73.476, lat1 = 40.914,
+               lng2 = -74.443, lat2 = 40.489) %>%
+  addPolygons(data = borough,
+              weight = 2,
+              fillOpacity = 0,
+              color = "#6e7f80",
+              label = borough$BoroName,
+              highlightOptions = highlightOptions(color = "black", 
+                                                  weight = 2),
+              group = "Borough") %>%
+  addPolygons(data = neighborhood,
+              color = "#6e7f80",
+              fillColor = ~choro_pal(neighborhood$prop_most_available),
+              fillOpacity = 0.8,
+              dashArray = "3",
+              weight = 2, 
+              label = neighborhood_label_2,
+              highlightOptions = highlightOptions(color = "black", 
+                                                  weight = 2),
+              group = "Neighborhood") %>%
+  addLegend(pal = choro_pal, 
+            values = neighborhood$prop_most_available, 
+            opacity = 0.7, 
+            title = "Proportion of listings available </br> >9 months in a year", 
+            position = "bottomright") %>%
+  addLayersControl(overlayGroups = c("Borough", "Neighborhood"))
+
+```
+
+Neighbourhoods in Upper Manhattan, Northern Brooklyn and Western Queens have 
+<=20% of rentals that are semi-permanent/permanent Airbnb listings 
+(light yellow). However, some of these neighbourhoods have thousands of listings,
+so a lower percentage still means hundreds of rentals in each neighbourhood that
+are not available to New Yorkers.
+
+The tourist hotspot neighbourhoods in Mid to Downtown Manhattan have 20 - 50% of 
+rentals that are semi-permanent/permanent Airbnb listings (light orange). Most
+of the neighbourhoods in all other boroughs also fall into this range. 
+These neighbourhoods often have hundreds of listings, a substantial portion
+of which are sequestered from the New York local renters. 
+
+Most of the neighbourhoods with >50% of rentals that are semi-permanent/
+permanent Airbnb listings (orange, dark orange and red) only have a small number
+of listings, so the high percentages probably do not have significant 
+implications about displacing New York locals. An exception is the neighbourhood
+of Canarsie in Southeastern Brooklyn, which has 149 listings, and half of them
+are long-term Airbnb listings. 
+
+
+## Question 2b)  
+
+Some hosts (identified by `host_id`) operate multiple rentals. Provide a data 
+table of the top hosts, the total number of listings they are associated with, 
+the average nightly price, and the estimated average monthly total income from 
+these listings.
+
+**Answer: **
+Hosts are identified by the unique host ID, and the number of listings, average
+nighly price and estimated average monthly total income (assuming all rentals are
+rented out for a month) are calculated for each host. The top 10 hosts operating
+the most Airbnb rentals are presented as follows:
+
+We can see from the host names that the top 10 hosts operating the most Airbnb 
+rentals are a mix of companies and individuals. Companies could be property 
+management agencies or corporate landlords holding multiple properties across NYC,
+and providing furnished, luxury apartments. 
+Examples include [Sonder](https://www.sonder.com/about), 
+[Blueground](https://www.theblueground.com/long-term-rentals), and
+[Airbnb's Corporate Housing catalogue](https://www.airbnb.com/d/corporate-housing).
+
+Even if the host is listed as individuals/couples, they could still be small-scale
+management teams hosting furnished rentals and living spaces. For example 
+[Kazuya](https://www.airbnb.co.in/rooms/27967600?source_impression_id=p3_1647853418_Kx5DX%2BcDVJNQ8kq%2F).
+
+
+
+```{r Q2b Table 5 Top hosts, echo=FALSE, message=FALSE}
+
+top_hosts <- airbnb_clean %>%
+  group_by(host_id, host_name) %>%
+  summarize(number_of_listings = n(), 
+            average_nightly_price = sprintf("%1.1f", mean(price)), 
+            estimated_avg_monthly_income = sprintf("%1.1f",mean(monthly_price))) %>%
+  arrange(desc(number_of_listings)) %>%
+  filter(number_of_listings > 10)
+
+datatable(top_hosts,
+          caption = "Table 5: Hosts operating more than 10 airbnb rentals",
+          filter = list(position = "top"),
+          options = list(language = list(sSearch = "Filter:")))
+
+```
+
+# Question 3 - Most Expensive and Top Reviewed Rentals
+
+Provide an interactive map which shows the Top 100 most expensive and Top 100 
+best reviewed rentals in NYC. The map should differentiate these two groups and 
+upon clicking on a point on the map should show some basic information 
+(at least 3 pieces of information) in a tool tip.
+
+**Answer: **
+First all rentals are ordered by price and review score, using the 
+`price`, `monthly_price` and `review_scores_rating`, `number_of_reviews` 
+variables respectively. Then the top 100 most expensive and 100 best reviewed 
+rentals are extracted as two separate data frames. 
+
+They are then layered into the interactive base map, and are labelled with 
+their ranking, prices, the type of room, guest capacity and zipcode. 
+
+Both most expensive and top reviewed rentals are mostly in Manhattan and North/
+Northwestern Brooklyn. 
+
+The top 100 most expensive rentals range from \$2000 - \$10,000 per night. 
+The 100 best reviewed rentals all have a mean review score of 100, based on an
+average of 91.88 reviews. 
+
+```{r Q3 Most expensive and best reviewed, echo=FALSE, message=FALSE}
+# sort and find top 100 most expensive by nightly and monthly price
+top_100_price <- airbnb_clean %>%
+  arrange(desc(price), desc(monthly_price)) %>%
+  slice(1:100) %>%
+  mutate(rank = row_number())
+
+# sort and find top 100 best reviewed using review_scores_rating
+top_100_rev <- airbnb_clean %>%
+  arrange(desc(review_scores_rating), desc(number_of_reviews)) %>%
+  slice(1:100) %>%
+   mutate(rank = row_number())
+
+# Make the listing labels: include the ranking, the nightly price, the review ratings, number of reviews, accomodates, room_type, zipcode
+mostexp_labels <- paste0("<b>Price ranking: </b>", top_100_price$rank, "<br/>",
+                         "<b>Price per night: </b>", "$ ", top_100_price$price, "<br/>",
+                         "<b>Room Type: </b>", top_100_price$room_type, "<br/>",
+                         "<b>Accomodates: </b>", top_100_price$accommodates, " guests <br/>",
+                         "<b>Zipcode: </b>", top_100_price$zipcode) %>%
+  lapply(htmltools::HTML)
+
+bestrev_labels <- paste0("<b>Best reviewed ranking: </b>", top_100_rev$rank, "<br/>",
+                         "<b>Average rating: </b>", top_100_rev$review_scores_rating, "<br/>",
+                         "<b>Number of reviews: </b>", top_100_rev$number_of_reviews, "<br/>",
+                         "<b>Price per night: </b>", "$ ", top_100_price$price, "<br/>",
+                         "<b>Room Type: </b>", top_100_price$room_type, "<br/>",
+                         "<b>Accomodates: </b>", top_100_price$accommodates, " guests <br/>",
+                         "<b>Zipcode: </b>", top_100_price$zipcode) %>%
+  lapply(htmltools::HTML)
+
+nyc_base %>%
+  addCircleMarkers(data = top_100_price,
+                   lng = ~longitude,
+                   lat = ~latitude,
+                   radius = 2,
+                   color = "#f5bd02",
+                   label = mostexp_labels,
+                   group = "Top 100 most expensive") %>%
+  addCircleMarkers(data = top_100_rev,
+                   lng = ~longitude,
+                   lat = ~latitude,
+                   radius = 2,
+                   color = "#253d5b",
+                   label = bestrev_labels,
+                   group = "Top 100 best reviewed") %>%
+  addLayersControl(overlayGroups = c("Top 100 most expensive",
+                                     "Top 100 best reviewed",
+                                     "Borough",
+                                     "Neighborhood"))
+```
