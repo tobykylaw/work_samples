@@ -1,5 +1,7 @@
 # Work samples
-Samples of R/ Python code and theory question attempts for school application purposes. For a more complete project, please check out the [diffBUM-HMM pipeline](https://github.com/marangiop/diff_BUM_HMM).
+Samples of R/ Python code and theory question attempts for work application purposes. For a more complete academic research project, please check out the [diffBUM-HMM pipeline](https://github.com/marangiop/diff_BUM_HMM).
+
+LinkedIn profile: https://www.linkedin.com/in/toby-law/(https://www.linkedin.com/in/toby-law/)
 
 ## Data Mining
 A collection of coding assignments completed for the Data Mining I (636-0018-00L) course at ETH Zurich. Folders contain all necessary input data to run the Python scripts, and instructions on how to run on cmd are included in the task description pdf files.
@@ -15,5 +17,5 @@ Coding and problem solving assignments completed for the Stochastics (Probabilit
 ## Data Visualization
 Visualization of graphical, geospatial and text data using R packages, coding and problem solving assignments completed for the Data Visualization course (QMSS-G5063) at Columbia University. Please see [README.md](./Data_Visualization/Airbnbs_in_NYC/readme.md) for the task description.
 
-### For current students of ETH Zurich and Columbia University:
+### To current students of ETH Zurich and Columbia University:
 Please do not copy, distribute and modify the contents of this repository for any personal purposes. Plagarism is never tolerated, and all course administrators strictly screen for attempts that plagarizes work submitted by students in previous years. There is much to learn from the the process of hammering this out on your own and with your peers.
