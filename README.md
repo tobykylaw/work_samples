@@ -27,7 +27,7 @@ Analysed 10,000 narratives of injuries to extract, summarize and visualize those
 Wrote test functions for a cipher function to see if it processes text with different cases, spaces and out-of-range symbols, throws the error errors, constructed a test class and parametrized test cases to submit iteratively to it. Task description and solutions both in [here](./Function_testing_with_pytest/Function_testing_with_pytest.ipynb).
 
 ## Object-oriented programming
-Defined new object classes in Python with custom attributes and methods, using them to instatiate new objects. Task description and solutions both in [here](./Object_oriented_programming/Object_oriented_programming_in_Python.ipynb)
+Defined new object classes in Python with custom attributes and methods, using them to instatiate new objects. Task description and solutions both in [here](./Object_oriented_programming/Object_oriented_programming_in_Python.ipynb).
 
 ### To current students of ETH Zurich and Columbia University:
 Please do not copy, distribute and modify the contents of this repository for any personal purposes. Plagarism is never tolerated, and all course administrators strictly screen for attempts that plagarizes work submitted by students in previous years. There is much to learn from the the process of hammering this out on your own and with your peers.
